@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: 更新说明（写入 latest.json 与 GitHub Release）
+        required: false
+        default: ""
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+# 发布到本仓库（EveryDoc-Releases）：默认 GITHUB_TOKEN 即可，无需 PAT
+jobs:
+  publish:
+    name: Build & publish (windows-x86_64)
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout EveryDoc (main repo, public)
+        uses: actions/checkout@v4
+        with:
+          repository: FinneyTang/EveryDoc
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check version consistency
+        run: npm run sync-version -- --check
+
+      - name: Build engine (PyInstaller onedir, cpu)
+        run: npm run engine:build
+
+      - name: Build Tauri bundle
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build
+
+      - name: Publish update release (this repo)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES: ${{ inputs.notes }}
+        shell: bash
+        run: npm run update:release -- --notes "$NOTES"
+
+      - name: Verify published update
+        run: npm run update:verify
